@@ -1,0 +1,24 @@
+# 基础依赖
+numpy
+pandas
+scikit-learn
+
+# 深度学习框架
+tensorflow
+transformers
+
+# API调用
+requests
+
+# 服务封装
+fastapi
+uvicorn
+
+# 数据处理
+jieba
+
+# 日志
+loguru
+
+# 容器化
+docker

@@ -1,0 +1,9 @@
+models/
+*.onnx
+*.bin
+*.pth
+__pycache__/
+.DS_Store
+results/
+data/processed/truncated_samples.json
+data/processed/labeled_samples.json.bak
