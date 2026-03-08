@@ -5,8 +5,10 @@ import dashscope
 from dashscope import Generation
 import re
 
-# 设置 API Key
-dashscope.api_key = "sk-9945083bf30946c9b5fa32a899305c14"
+key = os.environ.get("DASHSCOPE_API_KEY")
+if not key:
+    raise RuntimeError("DASHSCOPE_API_KEY is not set")
+dashscope.api_key = key
 
 def judge_semantic_completeness_batch(texts):
     """

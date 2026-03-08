@@ -1,8 +1,8 @@
 import json
 import requests
+import os
 
-# 火山引擎API配置
-API_KEY = "sk-9945083bf30946c9b5fa32a899305c14"
+API_KEY = os.environ.get("ARK_API_KEY") or ""
 API_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 
 def test_api():

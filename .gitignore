@@ -7,3 +7,11 @@ __pycache__/
 results/
 data/processed/truncated_samples.json
 data/processed/labeled_samples.json.bak
+*.env
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+*.p12
+*.pfx

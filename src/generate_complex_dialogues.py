@@ -4,8 +4,10 @@ import os
 import dashscope
 from dashscope import Generation
 
-# 设置 API Key
-dashscope.api_key = "sk-9945083bf30946c9b5fa32a899305c14"
+key = os.environ.get("DASHSCOPE_API_KEY")
+if not key:
+    raise RuntimeError("DASHSCOPE_API_KEY is not set")
+dashscope.api_key = key
 
 def generate_dialogue(scenario, p1, p2):
     prompt = f"""
