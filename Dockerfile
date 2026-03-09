@@ -1,17 +1,11 @@
-# 使用Python 3.10作为基础镜像
 FROM python:3.10-slim
-
-# 设置工作目录
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
-
-# 复制项目文件
-COPY . /app
-
-# 安装依赖
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 暴露端口
+COPY src /app/src
+COPY models /app/models
+COPY start.sh /app/start.sh
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir "fastapi[all]" onnx onnxruntime transformers uvicorn
 EXPOSE 8000
-
-# 启动服务
-CMD ["python", "services/app.py"]
+RUN chmod +x /app/start.sh
+CMD ["/app/start.sh"]

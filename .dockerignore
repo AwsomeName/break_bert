@@ -1,0 +1,19 @@
+# VCS
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Data & outputs
+data/
+results/
+*.tar
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/
