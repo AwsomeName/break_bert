@@ -1,7 +1,7 @@
 import json
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import BertTokenizer, BertForSequenceClassification
+from transformers import AutoTokenizer, BertConfig, BertForSequenceClassification
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score, f1_score
 import os
@@ -46,9 +46,22 @@ def evaluate_base_model():
     )
     
     # 2. 加载未经训练的预训练基座
-    model_name = "bert-base-chinese"
-    tokenizer = BertTokenizer.from_pretrained(model_name)
-    model = BertForSequenceClassification.from_pretrained(model_name, num_labels=2)
+    model_name = os.getenv("MODEL_NAME", "")
+    tokenizer_path = os.getenv("TOKENIZER_PATH", "models/bert_tokenizer")
+    output_report_path = os.getenv("OUTPUT_UNTRAINED_REPORT_PATH", "results/untrained_evaluation_report_bert_tiny.json")
+    tokenizer_source = model_name if model_name else tokenizer_path
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, local_files_only=True)
+    config = BertConfig(
+        vocab_size=tokenizer.vocab_size,
+        hidden_size=int(os.getenv("TINY_HIDDEN_SIZE", "128")),
+        num_hidden_layers=int(os.getenv("TINY_NUM_LAYERS", "2")),
+        num_attention_heads=int(os.getenv("TINY_NUM_HEADS", "4")),
+        intermediate_size=int(os.getenv("TINY_INTERMEDIATE_SIZE", "512")),
+        max_position_embeddings=512,
+        type_vocab_size=2,
+        num_labels=2
+    )
+    model = BertForSequenceClassification(config)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -62,7 +75,7 @@ def evaluate_base_model():
     all_preds = []
     all_labels = []
     
-    print(f"正在评估未经训练的基座模型 ({model_name}) 在测试集上的表现...")
+    print(f"正在评估未训练的 BERT-tiny 模型 ({tokenizer_source}) 在测试集上的表现...")
     with torch.no_grad():
         for batch in test_loader:
             input_ids = batch["input_ids"].to(device)
@@ -85,12 +98,14 @@ def evaluate_base_model():
         "classification_report": report
     }
     
-    os.makedirs("results", exist_ok=True)
-    with open("results/untrained_evaluation_report.json", "w", encoding="utf-8") as f:
+    report_dir = os.path.dirname(output_report_path)
+    if report_dir:
+        os.makedirs(report_dir, exist_ok=True)
+    with open(output_report_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
         
     print(f"评估完成！基座模型准确率: {acc:.4f}")
-    print(f"报告已保存至 results/untrained_evaluation_report.json")
+    print(f"报告已保存至 {output_report_path}")
 
 if __name__ == "__main__":
     evaluate_base_model()

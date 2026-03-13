@@ -7,6 +7,8 @@ __pycache__/
 results/
 data/processed/truncated_samples.json
 data/processed/labeled_samples.json.bak
+data/processed/labeled_samples_balanced.json
+*.tar
 *.env
 .env
 .env.*

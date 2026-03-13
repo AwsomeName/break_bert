@@ -1,65 +1,71 @@
-from datasets import load_dataset
 import json
 import random
 import os
 
+def sample_with_replacement(items, count, rng):
+    if count <= 0:
+        return []
+    if not items:
+        return []
+    return [rng.choice(items) for _ in range(count)]
+
+def sample_without_replacement(items, count, rng):
+    if count <= 0:
+        return []
+    if count >= len(items):
+        copied = items[:]
+        rng.shuffle(copied)
+        return copied
+    return rng.sample(items, count)
+
 def main():
-    print("正在加载 m-a-p/COIG-CQIA 数据集...")
-    dataset = load_dataset("m-a-p/COIG-CQIA", name="zhihu", split="train")
-    
-    # 1. 过滤 600 字以内的对话
-    print("正在过滤 600 字以内的样本...")
-    filtered_data = []
-    for item in dataset:
-        dialogue = []
-        if item.get("instruction"):
-            dialogue.append(item["instruction"])
-        if item.get("input"):
-            dialogue.append(item["input"])
-        if item.get("output"):
-            dialogue.append(item["output"])
-        
-        full_text = "\n".join(dialogue)
-        length = len(full_text)
-        
-        if 0 < length <= 600:
-            filtered_data.append({
-                "dialogue": dialogue,
-                "length": length
-            })
-    
-    print(f"符合条件的样本数: {len(filtered_data)}")
+    input_file = os.getenv("INPUT_FILE", "data/processed/labeled_samples.json")
+    output_file = os.getenv("OUTPUT_FILE", "data/processed/labeled_samples_balanced.json")
+    target_positive_ratio = float(os.getenv("TARGET_POSITIVE_RATIO", "0.30"))
+    total_scale = float(os.getenv("TOTAL_SCALE", "1.0"))
+    seed = int(os.getenv("RANDOM_SEED", "42"))
 
-    # 2. 按照长度分布均匀采样 10 条
-    # 将长度范围 (0, 600] 分成 10 个区间
-    print("正在按照均匀长度分布采样 10 条...")
-    num_samples = 10
-    step = 600 / num_samples
-    sampled_data = []
-    
-    for i in range(num_samples):
-        min_len = i * step
-        max_len = (i + 1) * step
-        
-        # 寻找落在此区间的样本
-        candidates = [d for d in filtered_data if min_len < d["length"] <= max_len]
-        
-        if candidates:
-            sampled_data.append(random.choice(candidates)["dialogue"])
-        else:
-            # 如果区间内没样本，从全局随机选一个
-            print(f"警告: 区间 {min_len}-{max_len} 没有样本，随机选择一个。")
-            sampled_data.append(random.choice(filtered_data)["dialogue"])
+    if not os.path.exists(input_file):
+        raise FileNotFoundError(f"未找到输入文件: {input_file}")
 
-    # 3. 保存采样数据
-    os.makedirs("data/raw", exist_ok=True)
-    with open("data/raw/samples.json", "w", encoding="utf-8") as f:
-        json.dump(sampled_data, f, ensure_ascii=False, indent=2)
-    
-    # 统计采样后的长度
-    sampled_lengths = [len("\n".join(d)) for d in sampled_data]
-    print(f"成功保存 10 条样本到 data/raw/samples.json")
-    print(f"采样长度分布: {sorted(sampled_lengths)}")
+    with open(input_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not data:
+        raise ValueError("输入数据为空，无法重采样")
+
+    rng = random.Random(seed)
+    negatives = [x for x in data if x.get("label") == 0]
+    positives = [x for x in data if x.get("label") == 1]
+    if not negatives or not positives:
+        raise ValueError("标签分布异常，必须同时包含 label=0 和 label=1")
+
+    original_total = len(data)
+    target_total = max(2, int(round(original_total * total_scale)))
+    target_positive = min(target_total - 1, max(1, int(round(target_total * target_positive_ratio))))
+    target_negative = target_total - target_positive
+
+    sampled_negative = sample_without_replacement(negatives, target_negative, rng)
+    sampled_positive = sample_with_replacement(positives, target_positive, rng)
+
+    resampled = sampled_negative + sampled_positive
+    rng.shuffle(resampled)
+
+    output_dir = os.path.dirname(output_file)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(resampled, f, ensure_ascii=False, indent=2)
+
+    new_neg = sum(1 for x in resampled if x.get("label") == 0)
+    new_pos = sum(1 for x in resampled if x.get("label") == 1)
+    print(f"原始样本总数: {original_total}")
+    print(f"原始分布: label=0 {len(negatives)} | label=1 {len(positives)}")
+    print(f"目标总数: {target_total}")
+    print(f"新分布: label=0 {new_neg} | label=1 {new_pos}")
+    print(f"新正样本占比: {new_pos / len(resampled):.4f}")
+    print(f"重采样完成，已保存到: {output_file}")
 
 if __name__ == "__main__":
     main()

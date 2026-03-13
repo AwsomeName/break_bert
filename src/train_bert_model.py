@@ -1,11 +1,10 @@
 import json
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import BertTokenizer, BertForSequenceClassification, AdamW, get_linear_schedule_with_warmup
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, BertConfig, BertForSequenceClassification, AdamW, get_linear_schedule_with_warmup
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score, f1_score
 import os
-import numpy as np
 from tqdm import tqdm
 import datetime
 
@@ -64,9 +63,22 @@ def evaluate(model, data_loader, device):
     f1 = f1_score(all_labels, all_preds, average='macro')
     return avg_loss, acc, f1, all_preds, all_labels
 
+def build_tiny_model(tokenizer, num_labels):
+    config = BertConfig(
+        vocab_size=tokenizer.vocab_size,
+        hidden_size=int(os.getenv("TINY_HIDDEN_SIZE", "128")),
+        num_hidden_layers=int(os.getenv("TINY_NUM_LAYERS", "2")),
+        num_attention_heads=int(os.getenv("TINY_NUM_HEADS", "4")),
+        intermediate_size=int(os.getenv("TINY_INTERMEDIATE_SIZE", "512")),
+        max_position_embeddings=512,
+        type_vocab_size=2,
+        num_labels=num_labels
+    )
+    return BertForSequenceClassification(config)
+
 def train():
     # 1. 加载打标后的数据
-    input_file = "data/processed/labeled_samples.json"
+    input_file = os.getenv("INPUT_FILE", "data/processed/labeled_samples.json")
     if not os.path.exists(input_file):
         print(f"数据文件不存在: {input_file}")
         return
@@ -88,14 +100,23 @@ def train():
     )
     
     # 3. 准备 Tokenizer 和 DataLoader
-    model_name = "bert-base-chinese"
-    tokenizer = BertTokenizer.from_pretrained(model_name)
+    model_name = os.getenv("MODEL_NAME", "hfl/rbt3")
+    tokenizer_path = os.getenv("TOKENIZER_PATH", "models/bert_tokenizer")
+    use_tiny_scratch = os.getenv("USE_TINY_SCRATCH", "0") == "1"
+    local_files_only = os.getenv("LOCAL_FILES_ONLY", "0") == "1"
+    allow_scratch_fallback = os.getenv("ALLOW_SCRATCH_FALLBACK", "1") == "1"
+    epochs = int(os.getenv("EPOCHS", "3"))
+    batch_size = int(os.getenv("BATCH_SIZE", "16"))
+    learning_rate = float(os.getenv("LEARNING_RATE", "2e-5"))
+    output_model_dir = os.getenv("OUTPUT_MODEL_DIR", "models/bert_tiny_model")
+    output_report_path = os.getenv("OUTPUT_REPORT_PATH", "results/final_evaluation_report_bert_tiny.json")
+    tokenizer_source = model_name if model_name else tokenizer_path
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, local_files_only=local_files_only)
     
     train_dataset = DialogueDataset(train_texts, train_labels, tokenizer)
     val_dataset = DialogueDataset(val_texts, val_labels, tokenizer)
     test_dataset = DialogueDataset(test_texts, test_labels, tokenizer)
     
-    batch_size = 16
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
@@ -104,13 +125,26 @@ def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"使用设备: {device}")
     
-    model = BertForSequenceClassification.from_pretrained(model_name, num_labels=2)
+    if use_tiny_scratch:
+        model = build_tiny_model(tokenizer, num_labels=2)
+    else:
+        try:
+            model = AutoModelForSequenceClassification.from_pretrained(
+                model_name,
+                num_labels=2,
+                local_files_only=local_files_only
+            )
+        except Exception as e:
+            if not allow_scratch_fallback:
+                raise
+            print(f"预训练 tiny 加载失败，切换为 tiny-scratch：{e}")
+            use_tiny_scratch = True
+            model = build_tiny_model(tokenizer, num_labels=2)
     model.to(device)
     
     # 5. 设置优化器和学习率调度器
-    epochs = 3
     total_steps = len(train_loader) * epochs
-    optimizer = AdamW(model.parameters(), lr=2e-5, eps=1e-8)
+    optimizer = AdamW(model.parameters(), lr=learning_rate, eps=1e-8)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=0, num_training_steps=total_steps
     )
@@ -160,14 +194,14 @@ def train():
         
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            os.makedirs("models/bert_model", exist_ok=True)
-            model.save_pretrained("models/bert_model")
-            tokenizer.save_pretrained("models/bert_model")
+            os.makedirs(output_model_dir, exist_ok=True)
+            model.save_pretrained(output_model_dir)
+            tokenizer.save_pretrained(output_model_dir)
             print(f"  发现更好的模型，已保存 (Val Acc: {val_acc:.4f})")
     
     # 7. 在测试集上评估最终模型
     print("\n--- 在测试集上进行最终评估 ---")
-    best_model = BertForSequenceClassification.from_pretrained("models/bert_model")
+    best_model = AutoModelForSequenceClassification.from_pretrained(output_model_dir, local_files_only=local_files_only)
     best_model.to(device)
     test_loss, test_acc, test_f1, test_preds, test_labels_list = evaluate(best_model, test_loader, device)
     
@@ -183,21 +217,27 @@ def train():
             "classification_report": report
         },
         "config": {
-            "model_name": model_name,
+            "input_file": input_file,
+            "model_name": model_name if model_name else "tiny-bert-scratch",
+            "tokenizer_source": tokenizer_source,
+            "use_tiny_scratch": use_tiny_scratch,
+            "local_files_only": local_files_only,
             "epochs": epochs,
             "batch_size": batch_size,
-            "lr": 2e-5,
+            "lr": learning_rate,
             "max_length": 128
         }
     }
     
-    os.makedirs("results", exist_ok=True)
-    with open("results/final_evaluation_report.json", "w", encoding="utf-8") as f:
+    report_dir = os.path.dirname(output_report_path)
+    if report_dir:
+        os.makedirs(report_dir, exist_ok=True)
+    with open(output_report_path, "w", encoding="utf-8") as f:
         json.dump(evaluation_results, f, ensure_ascii=False, indent=2)
     
     print(f"\n训练与测评完成！")
     print(f"测试集准确率: {test_acc:.4f}")
-    print(f"测评报告已保存至 results/final_evaluation_report.json")
+    print(f"测评报告已保存至 {output_report_path}")
 
 if __name__ == "__main__":
     train()
